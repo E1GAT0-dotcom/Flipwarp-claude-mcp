@@ -30,8 +30,12 @@ import {renameMethods} from './mcp-rename.js';
 import {
     fingerprintScripts, changedScripts, measureScripts, settleScripts, tidyScripts, showScripts
 } from './script-layout.js';
-import {installLive, record, describe as describeAction, busy, narrate} from './mcp-live.js';
-import {installIdlePause, requestStarted, requestFinished} from './mcp-idle.js';
+import {installLive, record, addThumb, showPlan, notesRead, describe as describeAction, busy, narrate}
+    from './mcp-live.js';
+import {installIdlePause, isIdlePaused, requestStarted, requestFinished} from './mcp-idle.js';
+import {installWatch, follow, showProgress, setIdentity, setPlan, setConnected, markBusy, isTakenOver, snapshot,
+    pointAtSprite} from './mcp-watch.js';
+import {setFrozen} from './gameplay.js';
 
 const STYLE = getStyle('js');
 const TEXT_OPTIONS = {style: STYLE, indent: '  '};
@@ -452,10 +456,84 @@ const status = text => {
     console.log(`[flipwarp-mcp] ${text}`);
 };
 
+// Requests that only look, allowed while the person has taken over the editor.
+const ONLY_LOOKS = new Set(['overview', 'readSprite', 'checkText', 'find', 'health', 'blockList', 'costumes',
+    'costumeSheet', 'previewImage', 'sounds', 'state', 'screenshot', 'logs', 'narrate']);
+
+// A cheap signature of everything a person could change in a sprite, to tell
+// Claude afterwards what they changed while they had the editor.
+const signatureOf = target => {
+    const blocks = Object.values(target.blocks._blocks).map(b =>
+        `${b.opcode}|${b.next}|${b.parent}|${JSON.stringify(b.fields)}|${Object.values(b.inputs || {})
+            .map(i => i.block)
+            .join(',')}`)
+        .sort()
+        .join('\n');
+    let hash = 5381;
+    for (let i = 0; i < blocks.length; i++) hash = ((hash * 33) ^ blocks.charCodeAt(i)) >>> 0;
+    return {
+        scripts: `${hash}:${blocks.length}`,
+        costumes: target.getCostumes().map(c => `${c.name}:${c.assetId}`)
+            .join(','),
+        sounds: target.getSounds().map(s => `${s.name}:${s.assetId}`)
+            .join(',')
+    };
+};
+
+const changedSince = (vm, before) => {
+    const changes = [];
+    for (const target of originals(vm)) {
+        const name = target.isStage ? 'Stage' : target.getName();
+        const was = before.get(target.id);
+        if (!was) {
+            changes.push(`${name} (new)`);
+            continue;
+        }
+        const now = signatureOf(target);
+        const what = ['scripts', 'costumes', 'sounds'].filter(k => now[k] !== was[k]);
+        if (what.length) changes.push(`${name} (${what.join(', ')})`);
+    }
+    for (const id of before.keys()) {
+        if (!vm.runtime.getTargetById(id)) changes.push('a sprite was deleted');
+    }
+    return changes.join('; ');
+};
+
+// What a write changed, as lines of text: the part that differs, with a
+// little around it.
+const textDiff = (before, after) => {
+    const a = String(before || '').split('\n');
+    const b = String(after || '').split('\n');
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start++;
+    let endA = a.length - 1;
+    let endB = b.length - 1;
+    while (endA >= start && endB >= start && a[endA] === b[endB]) {
+        endA--;
+        endB--;
+    }
+    const out = [];
+    const from = Math.max(0, start - 3);
+    if (from > 0) out.push({t: '…', s: `${from} line(s) the same`});
+    for (let i = from; i < start; i++) out.push({t: ' ', s: a[i]});
+    for (let i = start; i <= endA; i++) out.push({t: '-', s: a[i]});
+    for (let i = start; i <= endB; i++) out.push({t: '+', s: b[i]});
+    const to = Math.min(a.length, endA + 4);
+    for (let i = endA + 1; i < to; i++) out.push({t: ' ', s: a[i]});
+    if (to < a.length) out.push({t: '…', s: `${a.length - to} line(s) the same`});
+    return out.slice(0, 400);
+};
+
+const pictureOfResult = result => (result && result.png ? `data:image/png;base64,${result.png}` : null);
+
 export const installMcpBridge = vm => {
     const address = serverAddress();
     if (!address || typeof WebSocket === 'undefined') return;
     installPlay(vm);
+    let socketNow = null;
+    const sendEvent = event => {
+        if (socketNow && socketNow.readyState === WebSocket.OPEN) socketNow.send(JSON.stringify(event));
+    };
     installLive({
         onUndo: () => {
             const result = METHODS.undo(vm);
@@ -469,10 +547,115 @@ export const installMcpBridge = vm => {
             } catch (e) {
                 // The sprite has gone since: nothing to show.
             }
-        }
+        },
+        onNote: (text, about) => sendEvent({event: 'note', text, about})
     });
 
     installIdlePause(vm);
+
+    // Taking over: what every sprite was like, to say afterwards what changed.
+    let before = null;
+    installWatch(vm, {
+        isIdlePaused,
+        onTakeover: on => {
+            if (on) {
+                before = new Map(originals(vm).map(t => [t.id, signatureOf(t)]));
+                record({icon: '✋', text: 'you took over the editor: Claude waits'});
+                sendEvent({event: 'takeover', on: true});
+            } else {
+                const changed = before ? changedSince(vm, before) : '';
+                before = null;
+                record({icon: '🤝', text: `you handed it back${changed ? `: changed ${changed}` : ''}`});
+                sendEvent({event: 'takeover', on: false, changed});
+            }
+        }
+    });
+
+    // Which build of the editor this page is, from the server that served it,
+    // so a server rebuilt since can tell this tab is older than it.
+    let buildId = null;
+    if (!/^\d+$/.test(new URLSearchParams(location.search).get('mcp') || '')) {
+        fetch('build-id', {cache: 'no-store'}).then(r => (r.ok ? r.text() : null))
+            .then(id => {
+                buildId = id;
+            })
+            .catch(() => {});
+    }
+
+    // Loading a project: how many of its costumes and sounds are in.
+    let loading = false;
+    vm.on('ASSET_PROGRESS', (finished, total) => {
+        if (loading && total > 0) {
+            showProgress({label: `Opening the project: ${finished} of ${total} pictures and sounds`,
+                done: finished,
+                total});
+        }
+    });
+
+    // What the server tells the tab, one way: who this chat is, its plan,
+    // progress, test results, the control room pausing the game, and the
+    // editor having been rebuilt since this tab loaded.
+    const hearNotice = notice => {
+        switch (notice.notify) {
+        case 'welcome':
+            setIdentity(notice);
+            setPlan(notice.plan || null);
+            showPlan(notice.plan || null);
+            break;
+        case 'identity':
+            setIdentity(notice);
+            break;
+        case 'plan':
+            setPlan(notice.plan);
+            showPlan(notice.plan);
+            break;
+        case 'progress':
+            showProgress(notice.label || typeof notice.total === 'number' || notice.ms ? notice : null);
+            break;
+        case 'notes-read':
+            notesRead();
+            break;
+        case 'test': {
+            const kept = record({icon: notice.failed ? '❌' : '✅',
+                text: `test: ${notice.text}`,
+                tone: notice.failed ? 'bad' : 'good'});
+            snapshot(160).then(thumb => addThumb(kept, thumb));
+            break;
+        }
+        case 'act':
+            if (notice.do === 'pause') {
+                setFrozen(true);
+                record({icon: '⏸️', text: 'paused from the control room'});
+            } else if (notice.do === 'resume') {
+                setFrozen(false);
+                record({icon: '▶️', text: 'resumed from the control room'});
+            }
+            break;
+        case 'stale':
+            record({icon: '⚠️',
+                text: 'Flipwarp has been updated since this tab opened: save the game, ' +
+                'then reload this tab to use the new version',
+                tone: 'bad'});
+            narrate('Flipwarp has been updated since this tab opened. Save the game, then reload this tab.');
+            break;
+        default:
+        }
+    };
+
+    // Every few seconds the server hears how this tab is, for the control
+    // room: how hard the game works the computer, and now and then a picture.
+    let beats = 0;
+    setInterval(async () => {
+        if (!socketNow || socketNow.readyState !== WebSocket.OPEN) return;
+        const beat = {
+            event: 'heartbeat',
+            frameMs: typeof vm.runtime.flipwarpFrameCost === 'number' ? vm.runtime.flipwarpFrameCost : null,
+            hidden: document.hidden,
+            idlePaused: isIdlePaused()
+        };
+        if (beats++ % 3 === 0) beat.thumb = await snapshot(160);
+        sendEvent(beat);
+    }, 5000);
 
     // Whether the project has changed since it was loaded or Claude last
     // saved it, so a tab whose chat has ended is only closed when nothing
@@ -521,8 +704,10 @@ export const installMcpBridge = vm => {
         socket.onopen = () => {
             delay = 1000;
             lostAt = 0;
+            socketNow = socket;
+            setConnected(true);
             status(`connected to ${address}`);
-            socket.send(JSON.stringify({hello: 'flipwarp', version: 1, chat: key}));
+            socket.send(JSON.stringify({hello: 'flipwarp', version: 2, chat: key, build: buildId}));
         };
         socket.onmessage = async event => {
             let request;
@@ -535,31 +720,78 @@ export const installMcpBridge = vm => {
                 chatEnded();
                 return;
             }
-            const {id, method, params} = request;
+            if (request.notify) {
+                hearNotice(request);
+                return;
+            }
+            const {id, method, params = {}, why} = request;
             const fn = METHODS[method];
             let reply;
             busy();
+            markBusy();
             requestStarted();
+            follow(method, params);
+            // A write keeps its text from before, to show what it changed.
+            let textBefore = null;
+            if (method === 'writeSprite' && !isTakenOver()) {
+                try {
+                    textBefore = METHODS.readSprite(vm, {sprite: params.sprite}).text;
+                } catch (e) {
+                    // A sprite that cannot be read shows no change.
+                }
+            }
             try {
                 if (!fn) throw new Error(`Unknown request "${method}".`);
-                reply = {id, result: await fn(vm, params || {})};
+                if (isTakenOver() && !ONLY_LOOKS.has(method)) {
+                    throw new Error('The person watching has taken over the editor and is making changes ' +
+                        'themselves. Wait until they hand it back, then carry on.');
+                }
+                if (method === 'loadProject') loading = true;
+                reply = {id, result: await fn(vm, params)};
                 if (method === 'saveProject' || method === 'loadProject') unsaved = false;
             } catch (e) {
                 reply = {id, error: describeError(e)};
             } finally {
                 requestFinished();
+                if (loading) {
+                    loading = false;
+                    showProgress(null);
+                }
             }
             socket.send(JSON.stringify(reply));
-            // The strip says what just happened. A failure to say it must
+            // The timeline says what just happened. A failure to say it must
             // never become a failure of the request, which is already sent.
             try {
-                const line = describeAction(method, params || {}, reply.result || {}, !!reply.error);
-                if (line) record(line);
+                const result = reply.result || {};
+                const line = describeAction(method, params, result, !!reply.error);
+                if (!line) return;
+                if (why) line.why = why;
+                const picture = pictureOfResult(result);
+                if (picture) {
+                    line.picture = picture;
+                    line.thumb = picture;
+                }
+                if (method === 'writeSprite' && result.ok && result.changed && textBefore !== null) {
+                    try {
+                        line.diff = textDiff(textBefore, METHODS.readSprite(vm, {sprite: params.sprite}).text);
+                    } catch (e) {
+                        // shown without the change
+                    }
+                }
+                const kept = record(line);
+                if (params.sprite) pointAtSprite(params.sprite);
+                const pictureWorthy = (method === 'writeSprite' && result.changed) || method === 'greenFlag' ||
+                    method === 'stepFrames' || method === 'loadProject' || method === 'fixHealth';
+                if (pictureWorthy && !picture) addThumb(kept, await snapshot(160));
             } catch (e) {
                 // Nothing to show, then.
             }
         };
         socket.onclose = () => {
+            if (socketNow === socket) {
+                socketNow = null;
+                setConnected(false);
+            }
             if (ended) return;
             if (key) {
                 if (!lostAt) lostAt = Date.now();

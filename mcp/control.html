@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flipwarp control room</title>
+<style>
+  :root { --bg: #f4f5f8; --card: #ffffff; --ink: #1d1f27; --dim: #6b7080; --line: #e3e5ec; --bar: #e9ebf1; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11121a; --card: #1b1d28; --ink: #e8e8ea; --dim: #9aa0b4; --line: #2b2e3d; --bar: #2b2e3d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 16px 20px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  header .summary { color: var(--dim); }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px;
+    padding: 4px 10px; cursor: pointer; }
+  button:hover { border-color: var(--dim); }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 14px; padding: 0 20px 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    border-top: 5px solid var(--chat); display: flex; flex-direction: column; }
+  .thumb { aspect-ratio: 4 / 3; background: #000 center / cover no-repeat; position: relative; }
+  .thumb .badge { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.65); color: #fff; padding: 2px 8px;
+    border-radius: 10px; font-size: 12px; }
+  .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .name { font-weight: bold; font-size: 15px; display: flex; gap: 6px; align-items: center; }
+  .name .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--chat); flex: none; }
+  .name .port { color: var(--dim); font-weight: normal; font-size: 12px; margin-left: auto; }
+  .step, .doing { color: var(--dim); font-size: 13px; }
+  .doing b { color: var(--ink); font-weight: normal; }
+  .bar { height: 6px; background: var(--bar); border-radius: 3px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--chat); transition: width 0.4s; }
+  .power { font-size: 12px; color: var(--dim); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .empty { padding: 40px 20px; color: var(--dim); }
+  .needs { outline: 3px solid #ffbe0b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Flipwarp control room</h1>
+  <span class="summary" id="summary"></span>
+  <button id="alerts" type="button">Turn on alerts</button>
+</header>
+<main id="cards"></main>
+<script>
+// Every chat working in Flipwarp, from the status files the servers keep.
+// Read from whichever server showed this page; pausing goes to each chat's
+// own server.
+const STATUS_ICON = {working: '⏳', 'needs-you': '✋', done: '✓'};
+let alertsOn = false;
+const lastStatus = new Map();
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const ago = at => {
+  if (!at) return '';
+  const s = Math.round((Date.now() - at) / 1000);
+  return s < 5 ? 'now' : s < 60 ? `${s}s ago` : `${Math.round(s / 60)}m ago`;
+};
+const stateOf = s => {
+  if (!s.connected) return 'no editor tab';
+  if (s.takenOver) return 'you have the editor';
+  if (s.plan && s.plan.status === 'needs-you') return 'needs you';
+  if (s.plan && s.plan.status === 'done') return 'done';
+  if (s.idlePaused) return 'idle, paused';
+  if (s.lastAction && Date.now() - s.lastAction.at < 20000) return 'working';
+  return 'idle';
+};
+
+const beep = () => {
+  try {
+    const ctx = new AudioContext();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.frequency.value = 880;
+    g.gain.setValueAtTime(0.15, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    o.connect(g).connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + 0.4);
+  } catch (e) { /* no sound, then */ }
+};
+const alert = (s, what) => {
+  if (!alertsOn) return;
+  beep();
+  try {
+    if (Notification.permission === 'granted') new Notification(`${s.name || 'A chat'}: ${what}`, {silent: true});
+  } catch (e) { /* no notifications here */ }
+};
+
+const act = async (s, what) => {
+  try {
+    await fetch(`http://127.0.0.1:${s.port}/act?do=${what}`, {method: 'POST'});
+  } catch (e) { /* that chat has gone */ }
+  refresh();
+};
+
+let sessions = [];
+const render = () => {
+  const cards = document.getElementById('cards');
+  const working = sessions.filter(s => stateOf(s) === 'working').length;
+  const needs = sessions.filter(s => stateOf(s) === 'needs you').length;
+  document.getElementById('summary').textContent = sessions.length ?
+    `${sessions.length} chat(s): ${working} working${needs ? `, ${needs} need you` : ''}` : '';
+  document.title = `${needs ? '✋ ' : ''}${working ? `⏳${working} ` : ''}Flipwarp control room`;
+  if (!sessions.length) {
+    cards.innerHTML = '<div class="empty">No chats are using Flipwarp right now.</div>';
+    return;
+  }
+  const busiest = Math.max(1, ...sessions.map(s => s.frameMs || 0));
+  cards.innerHTML = sessions.map(s => {
+    const state = stateOf(s);
+    const plan = s.plan && s.plan.steps && s.plan.steps.length ? s.plan : null;
+    const pct = plan ? Math.round(((plan.status === 'done' ? plan.steps.length : plan.current - 1) / plan.steps.length) * 100) : null;
+    const doing = s.progress && s.progress.label ? s.progress.label :
+      s.lastAction ? `${s.lastAction.tool.replace(/_/g, ' ')}${s.lastAction.why ? `: ${s.lastAction.why}` : ''}` : '';
+    return `<div class="card${state === 'needs you' ? ' needs' : ''}" style="--chat:${esc(s.color)}">
+      <div class="thumb" style="${s.thumb ? `background-image:url('${s.thumb}')` : ''}">
+        <span class="badge">${esc(state)}</span></div>
+      <div class="body">
+        <div class="name"><span class="dot"></span>${esc(s.name || 'Untitled game')}<span class="port">:${s.port}</span></div>
+        ${plan ? `<div class="step">${STATUS_ICON[plan.status] || ''} Step ${plan.current} of ${plan.steps.length}: ${esc(plan.steps[plan.current - 1])}</div>
+          <div class="bar"><div style="width:${pct}%"></div></div>` : ''}
+        ${doing ? `<div class="doing"><b>${esc(doing)}</b> ${s.lastAction ? esc(ago(s.lastAction.at)) : ''}</div>` : ''}
+        ${s.frameMs != null ? `<div class="power">Computer power: ${s.frameMs.toFixed(1)}ms a frame
+          <div class="bar"><div style="width:${Math.round((s.frameMs / busiest) * 100)}%"></div></div></div>` : ''}
+        ${s.notesWaiting ? `<div class="step">${s.notesWaiting} note(s) waiting for Claude</div>` : ''}
+        <div class="actions">
+          ${s.connected ? `<button data-port="${s.port}" data-do="pause">Pause game</button>
+            <button data-port="${s.port}" data-do="resume">Resume</button>
+            <button data-port="${s.port}" data-do="only">Pause all but this</button>` :
+            `<a href="${esc(s.editorUrl)}" target="_blank"><button type="button">Open its editor</button></a>`}
+        </div>
+      </div></div>`;
+  }).join('');
+};
+
+document.getElementById('cards').addEventListener('click', e => {
+  const b = e.target.closest('button[data-do]');
+  if (!b) return;
+  const s = sessions.find(x => String(x.port) === b.dataset.port);
+  if (!s) return;
+  if (b.dataset.do === 'only') {
+    for (const other of sessions) if (other !== s && other.connected) act(other, 'pause');
+    act(s, 'resume');
+  } else {
+    act(s, b.dataset.do);
+  }
+});
+
+document.getElementById('alerts').addEventListener('click', async () => {
+  alertsOn = !alertsOn;
+  document.getElementById('alerts').textContent = alertsOn ? 'Alerts on' : 'Turn on alerts';
+  if (alertsOn && 'Notification' in window && Notification.permission === 'default') {
+    try { await Notification.requestPermission(); } catch (e) { /* sound only */ }
+  }
+  if (alertsOn) beep();
+});
+
+const refresh = async () => {
+  try {
+    sessions = await (await fetch('/sessions', {cache: 'no-store'})).json();
+  } catch (e) {
+    sessions = [];
+  }
+  for (const s of sessions) {
+    const state = stateOf(s);
+    const before = lastStatus.get(s.port);
+    if (before && before !== state && (state === 'done' || state === 'needs you')) alert(s, state);
+    lastStatus.set(s.port, state);
+  }
+  render();
+};
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

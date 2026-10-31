@@ -71,6 +71,9 @@ behaves exactly as normal.
 | `restyle_workflow` | How to rebuild a finished game the Scratch way without changing how it plays |
 | `tidy_scripts` | Lays a sprite's scripts out again: events on the left, custom blocks on the right |
 | `narrate` | Shows the person watching a short note about what Claude is doing |
+| `plan` | The checklist of Claude's steps and which one it is on: the progress bar in the editor, on the tab and in the control room |
+
+Every tool also takes an optional `why`, shown to the person watching beside what it did.
 
 ### Ready-made pieces
 
@@ -142,21 +145,61 @@ before it moves on.
 
 ### Watching Claude work
 
-With `?mcp`, the editor shows what Claude is doing as it happens:
+With `?mcp`, the editor is something to watch rather than to work in:
 
-- **Follow mode.** Every write opens that sprite, scrolls to the scripts that
-  changed and makes them glow for a moment. The reply names them too.
+- **Watching layout.** No block palette or add buttons; code, drawings and
+  sounds can be looked at but not dragged. **Take over** gives the person
+  the whole editor (Claude's changes are refused, with the reason, until
+  they **Hand back**, and then Claude is told which sprites they changed).
+- **Header**, top right: the chat's colour and its game's name, the step of
+  its plan, a progress bar for what it is doing now (opening a project,
+  saving, a play sequence, a wait), Follow, Take over, Download a copy, and
+  All chats (the control room).
+- **Follow.** The editor goes where Claude works: the sprite, the Costumes or
+  Sounds tab, a bigger stage while it plays, staying on each view at least
+  1.5 seconds. Clicking a tab or a sprite yourself stops following until you
+  press Follow Claude. A marker ("Claude") moves to what it is working on.
+- **Timeline**, over the code area: Claude's plan as a checklist, its latest
+  `narrate` note, and a line for each thing it did with its `why`, a
+  picture, and on a click the change itself (a write shows the text that
+  changed). Replay plays the pictures back in order. At the bottom, a box
+  to leave Claude a note (the pin points it at a sprite or a place on the
+  stage); it reaches Claude with its next tool reply.
+- **The tab** shows the chat's state in its title and icon (⏳ working with
+  the plan's percentage, ✋ needs you, ✓ done, ⏸ paused, 💤 idle), so a row
+  of tabs reads as a dashboard.
 - **Layout.** New scripts go to the bottom of their column (events on the
   left, custom block definitions on the right), measured as drawn, and
   anything a write made overlap is pushed down. Comments sit beside the
   block they belong to. `tidy_scripts` lays out a whole sprite again.
-- **Activity strip** over the top right of the code area: a line for each
-  thing Claude did, the latest write with an undo button, and Claude's
-  latest `narrate` note above them. Click a line to jump to that sprite.
 - **Keys and clicks.** While Claude plays, the keys it holds light up over
   the stage, and clicks show as ripples.
 
 None of it appears without `?mcp`.
+
+### Several chats: the control room
+
+Every server keeps a small status file (in the system temp folder,
+`flipwarp-sessions`), and any of them shows `/control`: a card for every chat
+with its game, plan and progress, what it is doing and why, a recent picture,
+how hard it works the computer, notes waiting, and Pause / Resume / Pause
+all but this. Alerts (a sound, and a notification if allowed) when a chat
+finishes or needs you. A chat leaves it when it ends.
+
+### Updating while chats work
+
+`tools.mjs` holds every tool but `open_editor` and `plan`; `server.mjs` holds
+the connections. When `tools.mjs`, the guide, the sounds or a piece changes,
+the server takes the old tools away and registers the new ones over the same
+connections, and Claude Code is sent the "tool list changed" notice; the
+editor tab and the game stay as they are. A change that does not load keeps
+the old tools. A change to `server.mjs` itself needs the chat to reconnect,
+and Claude is told so.
+
+Each tab reports the editor build it loaded. When the editor has been rebuilt
+since, Claude is told (once) to save and have the tab reloaded, and the tab
+says the same; a request an older tab does not know comes back saying that,
+instead of "unknown request".
 
 ### Keep the tab visible while Claude plays
 
@@ -209,6 +252,7 @@ node test/flipwarp/mcp-end-to-end.mjs         # then open the editor address abo
 node test/flipwarp/mcp-game.mjs               # builds and plays a whole platformer (same)
 node test/flipwarp/mcp-topdown.mjs            # builds and plays a whole top-down game (same)
 node test/flipwarp/mcp-many-chats.mjs         # two chats, two editors; open the two addresses it prints
+node test/flipwarp/mcp-watching.mjs           # plan, control room, notes, take over, tools reloading, old tabs
 ```
 
 The play tests start their own server. While Claude Code is open in this

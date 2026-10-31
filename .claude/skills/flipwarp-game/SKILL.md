@@ -30,12 +30,16 @@ Decide (ask the user only if the request truly leaves it open):
   (the stage is 480x360; a tile is 24; a player about 16x24).
 - The level map(s) as text rows.
 
-Tell the user the plan in a few lines, then build.
+Tell the user the plan in a few lines, then build. Put the same steps on
+screen with `plan` (steps, and the game's name), and call `plan` with
+`current` as you reach each one: it is their progress bar.
 
-Someone is usually watching the editor while you work. Before each step,
-`narrate` one plain sentence of what you are about to do ("Drawing the
-player: a red robot facing right, 16 by 24"). Each write shows them the
-scripts that changed, glowing, and lists it in the activity strip.
+Someone is usually watching the editor while you work; it follows you to
+what you are working on. Before each step, `narrate` one plain sentence of
+what you are about to do ("Drawing the player: a red robot facing right, 16
+by 24"), and give tools a short `why`. Each write shows them the scripts that
+changed, glowing, and lists it in the timeline. Notes they leave you come
+back in tool replies: act on them.
 
 ## 3. Build in this order
 

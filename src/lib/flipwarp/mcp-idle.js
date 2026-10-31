@@ -34,6 +34,9 @@ const wake = () => {
     record({icon: '▶', text: 'carried on', tone: 'dim'});
 };
 
+/** @returns {boolean} whether the game is paused because nothing is happening */
+export const isIdlePaused = () => idlePaused;
+
 /** A request from Claude has arrived: carry on if idle-paused. */
 export const requestStarted = () => {
     inFlight++;
