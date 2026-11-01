@@ -113,7 +113,7 @@ let currentWhy = null;
 // Which build of the editor is on disk now, to compare with the one a tab loaded.
 const currentBuild = () => {
     try {
-        return String(Math.round(fs.statSync(path.join(BUILD, 'js', 'editor.js')).mtimeMs));
+        return String(Math.round(fs.statSync(path.join(BUILD, 'editor.html')).mtimeMs));
     } catch (e) {
         return null;
     }
@@ -707,7 +707,7 @@ const tabIsOld = () => {
 };
 try {
     let timer = null;
-    fs.watch(path.join(BUILD, 'js'), () => {
+    fs.watch(BUILD, () => {
         clearTimeout(timer);
         timer = setTimeout(() => {
             if (tabIsOld() && !staleTold) notifyEditor('stale');

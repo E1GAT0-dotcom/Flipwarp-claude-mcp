@@ -142,11 +142,11 @@ check(!(await call('project_overview')).error, 'and still work, over the same co
 
 // --- an editor tab older than the editor -------------------------------------------------
 
-const editorJs = path.join(build, 'js', 'editor.js');
-const stamp = fs.statSync(editorJs);
-fs.utimesSync(editorJs, stamp.atime, new Date(Date.now() + 60000));
+const editorHtml = path.join(build, 'editor.html');
+const stamp = fs.statSync(editorHtml);
+fs.utimesSync(editorHtml, stamp.atime, new Date(Date.now() + 60000));
 r = await call('project_overview');
-fs.utimesSync(editorJs, stamp.atime, stamp.mtime);
+fs.utimesSync(editorHtml, stamp.atime, stamp.mtime);
 check(/has been rebuilt since this editor tab opened/.test(r.text), 'an editor rebuilt since the tab opened is spotted',
     r.text.slice(-300));
 

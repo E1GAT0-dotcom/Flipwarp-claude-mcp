@@ -11,6 +11,7 @@
 // The text is always the js style, whatever the editor is set to. Claude reads
 // one spelling well; it should not have to guess which one this tab is in.
 
+import LazyScratchBlocks from '../tw-lazy-scratch-blocks';
 import {
     readCurrentTarget, checkText, applyText, snapshotCurrentTarget, restoreBlocks, ParseError
 } from './vm-bridge.js';
@@ -86,12 +87,22 @@ const targetNamed = (vm, name) => {
     return found;
 };
 
+// The block editor reports what it has just drawn a moment later, to whichever
+// sprite is open by then. Those reports have to be in before anything changes
+// the blocks: arriving after, they land on the new blocks and can tie them in a
+// knot ("Maximum call stack size exceeded"). Asked for rather than waited for,
+// because a hidden tab's timers can take a minute.
+const settleEditor = () => {
+    if (LazyScratchBlocks.isLoaded()) LazyScratchBlocks.get().Events.fireNow_();
+};
+
 // Reading and writing work on the sprite open in the editor, the way the Text
 // button does, so the sprite is opened first. That also means the person
 // watching sees which sprite is being changed.
 const open = (vm, name) => {
     const target = targetNamed(vm, name);
     if (vm.editingTarget !== target) vm.setEditingTarget(target.id);
+    settleEditor();
     return target;
 };
 
@@ -300,6 +311,7 @@ const METHODS = {
             // cannot leave an extension added to the project for nothing.
             checkText(vm, text, positions, STYLE);
             const extensionsLoaded = await loadExtensionsFor(vm, text);
+            settleEditor();
             const result = await applyText(vm, text, positions, STYLE);
             result.extensionsLoaded = extensionsLoaded;
             let changedIds = [];
@@ -747,6 +759,7 @@ export const installMcpBridge = vm => {
                         'themselves. Wait until they hand it back, then carry on.');
                 }
                 if (method === 'loadProject') loading = true;
+                settleEditor();
                 reply = {id, result: await fn(vm, params)};
                 if (method === 'saveProject' || method === 'loadProject') unsaved = false;
             } catch (e) {
