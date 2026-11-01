@@ -86,8 +86,7 @@ body.fw-watching [class*="sprite-info_sprite-info"] input { pointer-events: none
 .fw-head.fw-docked .fw-mid { min-width: 60px; max-width: 220px; }
 .fw-head.fw-docked button, .fw-head.fw-docked a.fw-btn { flex: none; padding: 3px 7px; }
 @media (max-width: 1000px) { .fw-head.fw-docked .fw-extra { display: none !important; } }
-body:has(.fw-head.fw-docked) [class*="menu-bar_menu-bar-item"]:has(> [class*="community-button_community-button"]) {
-  display: none; }
+.fw-making-room { display: none !important; }
 .fw-cursor { position: fixed; z-index: 700; pointer-events: none; opacity: 0;
   transition: left 0.6s ease, top 0.6s ease, opacity 0.5s; }
 .fw-cursor svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
@@ -95,11 +94,10 @@ body:has(.fw-head.fw-docked) [class*="menu-bar_menu-bar-item"]:has(> [class*="co
   font: bold 11px "Helvetica Neue", Helvetica, Arial, sans-serif; background: var(--fw-chat, #3a86ff);
   white-space: nowrap; }
 .fw-cursor.fw-shown { opacity: 1; }
-body:has([class*="stage-wrapper_full-screen"]) .fw-cursor { display: none; }
-body:has([class*="stage-wrapper_full-screen"]) .fw-head { position: fixed; top: auto; bottom: 8px; right: 8px;
+body.fw-full .fw-cursor { display: none; }
+body.fw-full .fw-head { position: fixed; top: auto; bottom: 8px; right: 8px;
   opacity: 0.85; max-width: min(340px, calc(100vw - 16px)); pointer-events: none; }
-body:has([class*="stage-wrapper_full-screen"]) .fw-head button,
-body:has([class*="stage-wrapper_full-screen"]) .fw-head a.fw-btn { display: none; }
+body.fw-full .fw-head button, body.fw-full .fw-head a.fw-btn { display: none; }
 `;
 
 const el = (tag, className, text) => {
@@ -420,13 +418,20 @@ const buildHeader = () => {
 // The header sits in the menu bar, taking its own room there, so it never
 // covers the editor's controls. In full screen, which covers the menu bar,
 // or before the editor has drawn one, it floats in a corner instead.
+// "See Project Page" makes room for it: it does nothing for a local project.
+// Done with classes set here rather than CSS :has(), which made the browser
+// recheck the whole page on every change and loading take four times as long.
 const dock = () => {
     const mainMenu = document.querySelector('[class*="menu-bar_main-menu"]');
-    const full = document.querySelector('[class*="stage-wrapper_full-screen"]');
+    const full = !!document.querySelector('[class*="stage-wrapper_full-screen"]');
     const bar = !full && mainMenu && mainMenu.parentElement;
     const home = bar || document.body;
     if (header.parentElement !== home) home.appendChild(header);
     header.classList.toggle('fw-docked', !!bar);
+    document.body.classList.toggle('fw-full', full);
+    const projectPage = document.querySelector('[class*="community-button_community-button"]');
+    const item = projectPage && projectPage.closest('[class*="menu-bar_menu-bar-item"]');
+    if (item) item.classList.toggle('fw-making-room', !!bar);
 };
 
 // --- what the bridge tells this ----------------------------------------------------

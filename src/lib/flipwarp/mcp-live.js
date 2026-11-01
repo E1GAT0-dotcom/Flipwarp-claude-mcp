@@ -102,7 +102,7 @@ const css = `
 .fw-ripple { position: fixed; z-index: 501; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
   border: 3px solid #ffd23f; pointer-events: none; animation: fw-ripple 0.6s ease-out forwards; }
 @keyframes fw-ripple { from { transform: scale(0.5); opacity: 1; } to { transform: scale(3.5); opacity: 0; } }
-body:has([class*="stage-wrapper_full-screen"]) .fw-live { display: none; }
+body.fw-full .fw-live { display: none; }
 `;
 
 const el = (tag, className, text) => {
@@ -312,6 +312,17 @@ const render = () => {
         }
         list.appendChild(li);
     }
+};
+
+// Only the times change on their own: rebuilding every line and picture
+// each second would cost the game a hitch every second.
+const refreshTimes = () => {
+    if (!list) return;
+    const times = list.querySelectorAll('.fw-when');
+    entries.forEach((entry, i) => {
+        const now = ago(entry.at);
+        if (times[i] && times[i].textContent !== now) times[i].textContent = now;
+    });
 };
 
 /**
@@ -582,7 +593,7 @@ export const installLive = options => {
     // tabs), so the overlays follow it, and the times stay fresh.
     setInterval(() => {
         place();
-        render();
+        refreshTimes();
     }, 1000);
 };
 
