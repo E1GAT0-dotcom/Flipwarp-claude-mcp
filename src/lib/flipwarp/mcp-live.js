@@ -13,6 +13,7 @@
 //     order: the game being built.
 //   - the keys Claude is holding, over the bottom left of the stage;
 //   - a ripple where Claude clicked the stage.
+// Full screen is for playing: the timeline goes until the person comes back.
 
 const MAX_ENTRIES = 80;
 
@@ -101,6 +102,7 @@ const css = `
 .fw-ripple { position: fixed; z-index: 501; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
   border: 3px solid #ffd23f; pointer-events: none; animation: fw-ripple 0.6s ease-out forwards; }
 @keyframes fw-ripple { from { transform: scale(0.5); opacity: 1; } to { transform: scale(3.5); opacity: 0; } }
+body:has([class*="stage-wrapper_full-screen"]) .fw-live { display: none; }
 `;
 
 const el = (tag, className, text) => {
@@ -114,7 +116,9 @@ const ago = at => {
     const s = Math.round((Date.now() - at) / 1000);
     if (s < 5) return 'now';
     if (s < 60) return `${s}s`;
-    return `${Math.round(s / 60)}m`;
+    if (s < 3600) return `${Math.round(s / 60)}m`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h`;
+    return `${Math.floor(s / 86400)}d`;
 };
 
 // --- where things go -----------------------------------------------------------
@@ -127,7 +131,8 @@ const stageCanvas = () => {
 };
 
 const place = () => {
-    if (strip) {
+    // Hidden (full screen) it has no width to place by: left where it was.
+    if (strip && strip.offsetWidth) {
         // Over the code area when it is showing; over the right of the page
         // when the Costumes or Sounds tab is, so it is always there.
         const area = codeArea();

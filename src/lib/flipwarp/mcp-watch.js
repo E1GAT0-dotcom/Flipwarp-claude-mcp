@@ -5,9 +5,9 @@
 //     that can be looked at but not dragged. "Take over" gives the person
 //     the whole editor back (and tells Claude to wait); "Hand back" returns
 //     it, and Claude is told what they changed.
-//   - A header: which chat this is (its colour and its game's name), the
-//     step of its plan, a progress bar for what it is doing, Follow, Take
-//     over, Download a copy, and a link to the control room.
+//   - A header in the menu bar: which chat this is (its colour and its
+//     game's name), the step of its plan, a progress bar for what it is
+//     doing, Follow, Take over, Download, and a link to the control room.
 //   - Follow: the editor goes where Claude is working (the sprite, the
 //     Costumes or Sounds tab, a bigger stage while it plays), staying on each
 //     view long enough to see, and stops following when the person looks
@@ -79,6 +79,15 @@ body.fw-watching [class*="sprite-info_sprite-info"] input { pointer-events: none
 .fw-head button:hover, .fw-head a.fw-btn:hover { background: rgba(255,255,255,0.2); }
 .fw-head button.fw-on { background: var(--fw-chat, #3a86ff); border-color: transparent; }
 .fw-head button.fw-call { background: #ffbe0b; color: #11121a; border-color: transparent; }
+.fw-head.fw-docked { position: static; flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; max-width: none;
+  align-self: center; margin-right: 8px; overflow: hidden; box-shadow: none; font-weight: normal; }
+.fw-head.fw-docked .fw-who { min-width: 50px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.fw-head.fw-docked .fw-pre { display: none; }
+.fw-head.fw-docked .fw-mid { min-width: 60px; max-width: 220px; }
+.fw-head.fw-docked button, .fw-head.fw-docked a.fw-btn { flex: none; padding: 3px 7px; }
+@media (max-width: 1000px) { .fw-head.fw-docked .fw-extra { display: none !important; } }
+body:has(.fw-head.fw-docked) [class*="menu-bar_menu-bar-item"]:has(> [class*="community-button_community-button"]) {
+  display: none; }
 .fw-cursor { position: fixed; z-index: 700; pointer-events: none; opacity: 0;
   transition: left 0.6s ease, top 0.6s ease, opacity 0.5s; }
 .fw-cursor svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
@@ -86,6 +95,11 @@ body.fw-watching [class*="sprite-info_sprite-info"] input { pointer-events: none
   font: bold 11px "Helvetica Neue", Helvetica, Arial, sans-serif; background: var(--fw-chat, #3a86ff);
   white-space: nowrap; }
 .fw-cursor.fw-shown { opacity: 1; }
+body:has([class*="stage-wrapper_full-screen"]) .fw-cursor { display: none; }
+body:has([class*="stage-wrapper_full-screen"]) .fw-head { position: fixed; top: auto; bottom: 8px; right: 8px;
+  opacity: 0.85; max-width: min(340px, calc(100vw - 16px)); pointer-events: none; }
+body:has([class*="stage-wrapper_full-screen"]) .fw-head button,
+body:has([class*="stage-wrapper_full-screen"]) .fw-head a.fw-btn { display: none; }
 `;
 
 const el = (tag, className, text) => {
@@ -198,7 +212,7 @@ const renderHeader = () => {
     header.style.setProperty('--fw-chat', identity.color);
     document.documentElement.style.setProperty('--fw-chat', identity.color);
     parts.who.textContent = '';
-    parts.who.appendChild(document.createTextNode(takenOver ? 'You have the editor · ' : 'Claude is building '));
+    parts.who.appendChild(el('span', 'fw-pre', takenOver ? 'You have the editor · ' : 'Claude is building '));
     parts.who.appendChild(el('b', '', identity.name || 'this game'));
     const p = progressNow;
     parts.label.textContent = (p && p.label) || planLine() || (connected ? 'Ready' : 'Waiting for Claude to connect');
@@ -392,15 +406,27 @@ const buildHeader = () => {
     parts.take = el('button', '', 'Take over');
     parts.take.title = 'Edit the project yourself; Claude waits until you hand it back';
     parts.take.addEventListener('click', () => setTakenOver(!takenOver));
-    const save = el('button', '', 'Download a copy');
+    const save = el('button', 'fw-extra', 'Download');
     save.title = 'Save the project as it is now to your computer';
     save.addEventListener('click', download);
-    parts.control = el('a', 'fw-btn', 'All chats');
+    parts.control = el('a', 'fw-btn fw-extra', 'All chats');
     parts.control.target = '_blank';
     parts.control.title = 'The control room: every chat working in Flipwarp';
     parts.control.style.display = 'none';
     for (const p of [parts.who, mid, parts.follow, parts.take, save, parts.control]) header.appendChild(p);
     document.body.appendChild(header);
+};
+
+// The header sits in the menu bar, taking its own room there, so it never
+// covers the editor's controls. In full screen, which covers the menu bar,
+// or before the editor has drawn one, it floats in a corner instead.
+const dock = () => {
+    const mainMenu = document.querySelector('[class*="menu-bar_main-menu"]');
+    const full = document.querySelector('[class*="stage-wrapper_full-screen"]');
+    const bar = !full && mainMenu && mainMenu.parentElement;
+    const home = bar || document.body;
+    if (header.parentElement !== home) home.appendChild(header);
+    header.classList.toggle('fw-docked', !!bar);
 };
 
 // --- what the bridge tells this ----------------------------------------------------
@@ -550,6 +576,15 @@ export const installWatch = (virtualMachine, opts = {}) => {
     renderHeader();
     // The editor sets its own title when the project changes; this keeps the
     // chat's state on it, and the busy sign goes once Claude has gone quiet.
-    setInterval(updateTab, 1000);
+    // The menu bar can be drawn again too, so the header goes back into it.
+    setInterval(() => {
+        updateTab();
+        dock();
+    }, 1000);
     updateTab();
+    dock();
+    // Full screen comes and goes on a click or a key: move with it at once.
+    const soon = () => setTimeout(dock, 50);
+    document.addEventListener('click', soon, true);
+    document.addEventListener('keyup', soon, true);
 };

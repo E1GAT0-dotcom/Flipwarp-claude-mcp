@@ -151,10 +151,11 @@ With `?mcp`, the editor is something to watch rather than to work in:
   sounds can be looked at but not dragged. **Take over** gives the person
   the whole editor (Claude's changes are refused, with the reason, until
   they **Hand back**, and then Claude is told which sprites they changed).
-- **Header**, top right: the chat's colour and its game's name, the step of
-  its plan, a progress bar for what it is doing now (opening a project,
-  saving, a play sequence, a wait), Follow, Take over, Download a copy, and
-  All chats (the control room).
+- **Header**, in the menu bar: the chat's colour and its game's name, the step
+  of its plan, a progress bar for what it is doing now (opening a project,
+  saving, a play sequence, a wait), Follow, Take over, Download (a copy), and
+  All chats (the control room). In full screen it shrinks to a small sign in
+  the corner and the timeline goes, so nothing covers the game.
 - **Follow.** The editor goes where Claude works: the sprite, the Costumes or
   Sounds tab, a bigger stage while it plays, staying on each view at least
   1.5 seconds. Clicking a tab or a sprite yourself stops following until you
